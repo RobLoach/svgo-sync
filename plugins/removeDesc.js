@@ -5,10 +5,12 @@ exports.type = 'perItem';
 exports.active = true;
 
 exports.params = {
-    removeAny: false
+    removeAny: true
 };
 
-var standardDescs = /^Created with/;
+exports.description = 'removes <desc>';
+
+var standardDescs = /^(Created with|Created using)/;
 
 /**
  * Removes <desc>.

@@ -1,11 +1,13 @@
+/* jshint quotmark: false */
 'use strict';
 
 exports.type = 'perItem';
 
 exports.active = true;
 
-var EXTEND = require('whet.extend'),
-    stylingProps = require('./_collections').stylingProps,
+exports.description = 'converts style to attributes';
+
+var stylingProps = require('./_collections').attrsGroups.presentation,
     rEscape = '\\\\(?:[0-9a-f]{1,6}\\s?|\\r\\n|.)',                 // Like \" or \2051. Code points consume one space.
     rAttr = '\\s*(' + g('[^:;\\\\]', rEscape) + '*?)\\s*',          // attribute name like ‘fill’
     rSingleQuotes = "'(?:[^'\\n\\r\\\\]|" + rEscape + ")*?(?:'|$)", // string in single quotes: 'smth'
@@ -39,7 +41,7 @@ var EXTEND = require('whet.extend'),
  * @example
  * <g style="fill:#000; color: #fff; -webkit-blah: blah">
  *             ⬇
- * <g fill="#000" color="#fff" slyle="-webkit-blah: blah">
+ * <g fill="#000" color="#fff" style="-webkit-blah: blah">
  *
  * @param {Object} item current iteration item
  * @return {Boolean} if false, item will be filtered out
@@ -47,6 +49,7 @@ var EXTEND = require('whet.extend'),
  * @author Kir Belevich
  */
 exports.fn = function(item) {
+    /* jshint boss: true */
 
     if (item.elem && item.hasAttr('style')) {
             // ['opacity: 1', 'color: #000']
@@ -58,7 +61,7 @@ exports.fn = function(item) {
         styleValue = styleValue.replace(regStripComments, function(match) {
             return match[0] == '/' ? '' :
                 match[0] == '\\' && /[-g-z]/i.test(match[1]) ? match[1] : match;
-        })
+        });
 
         regDeclarationBlock.lastIndex = 0;
         for (var rule; rule = regDeclarationBlock.exec(styleValue);) {
@@ -92,7 +95,7 @@ exports.fn = function(item) {
                 return true;
             });
 
-            EXTEND(item.attrs, attrs);
+            Object.assign(item.attrs, attrs);
 
             if (styles.length) {
                 item.attr('style').value = styles

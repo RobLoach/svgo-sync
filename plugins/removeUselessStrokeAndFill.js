@@ -4,16 +4,19 @@ exports.type = 'perItem';
 
 exports.active = true;
 
+exports.description = 'removes useless stroke and fill attributes';
+
 exports.params = {
     stroke: true,
-    fill: true
+    fill: true,
+    removeNone: false,
+    hasStyleOrScript: false
 };
 
 var shape = require('./_collections').elemsGroups.shape,
     regStrokeProps = /^stroke/,
     regFillProps = /^fill-/,
-    styleOrScript = ['style', 'script'],
-    hasStyleOrScript = false;
+    styleOrScript = ['style', 'script'];
 
 /**
  * Remove useless stroke and fill attrs.
@@ -25,12 +28,12 @@ var shape = require('./_collections').elemsGroups.shape,
  * @author Kir Belevich
  */
 exports.fn = function(item, params) {
-
+    
     if (item.isElem(styleOrScript)) {
-        hasStyleOrScript = true;
+        params.hasStyleOrScript = true;
     }
 
-    if (!hasStyleOrScript && item.isElem(shape) && !item.computedAttr('id')) {
+    if (!params.hasStyleOrScript && item.isElem(shape) && !item.computedAttr('id')) {
 
         var stroke = params.stroke && item.computedAttr('stroke'),
             fill = params.fill && !item.computedAttr('fill', 'none');
@@ -83,6 +86,13 @@ exports.fn = function(item, params) {
                         local: 'fill'
                     });
             }
+        }
+
+        if (params.removeNone && 
+            (!stroke || item.hasAttr('stroke') && item.attr('stroke').value=='none') &&
+            (!fill || item.hasAttr('fill') && item.attr('fill').value=='none')) {
+
+            return false;
         }
 
     }

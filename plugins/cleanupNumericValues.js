@@ -4,6 +4,8 @@ exports.type = 'perItem';
 
 exports.active = true;
 
+exports.description = 'rounds numeric values to the fixed precision, removes default ‘px’ units';
+
 exports.params = {
     floatPrecision: 3,
     leadingZero: true,
@@ -15,7 +17,7 @@ var regNumericValues = /^([\-+]?\d*\.?\d+([eE][\-+]?\d+)?)(px|pt|pc|mm|cm|m|in|f
     removeLeadingZero = require('../lib/svgo/tools').removeLeadingZero,
     absoluteLengths = { // relative to px
         cm: 96/2.54,
-        mm: 9600/2.54,
+        mm: 96/25.4,
         in: 96,
         pt: 4/3,
         pc: 16
@@ -35,24 +37,33 @@ exports.fn = function(item, params) {
 
     if (item.isElem()) {
 
-        var match;
+        var floatPrecision = params.floatPrecision;
+
+        if (item.hasAttr('viewBox')) {
+            var nums = item.attr('viewBox').value.split(/[ ,]/g);
+            item.attr('viewBox').value = nums.map(function(value) {
+                var num = +value;
+                return isNaN(num) ? value : +num.toFixed(floatPrecision);
+            }).join(' ');
+        }
 
         item.eachAttr(function(attr) {
-            match = attr.value.match(regNumericValues);
+            var match = attr.value.match(regNumericValues);
 
             // if attribute value matches regNumericValues
             if (match) {
                 // round it to the fixed precision
-                var num = +(+match[1]).toFixed(params.floatPrecision),
+                var num = +(+match[1]).toFixed(floatPrecision),
                     units = match[3] || '';
 
                 // convert absolute values to pixels
                 if (params.convertToPx && units && (units in absoluteLengths)) {
-                    var pxNum = +(absoluteLengths[units] * match[1]).toFixed(params.floatPrecision);
+                    var pxNum = +(absoluteLengths[units] * match[1]).toFixed(floatPrecision);
 
-                    if (String(pxNum).length < match[0].length)
-                        num = pxNum,
+                    if (String(pxNum).length < match[0].length) {
+                        num = pxNum;
                         units = 'px';
+                    }
                 }
 
                 // and remove leading zero

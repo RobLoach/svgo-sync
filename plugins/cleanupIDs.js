@@ -4,15 +4,20 @@ exports.type = 'full';
 
 exports.active = true;
 
+exports.description = 'removes unused IDs and minifies used';
+
 exports.params = {
     remove: true,
     minify: true,
-    prefix: ''
+    prefix: '',
+    preserve: [],
+    force: false
 };
 
-var referencesProps = require('./_collections').referencesProps,
-    regReferencesUrl = /^url\(#(.+?)\)$/,
+var referencesProps = new Set(require('./_collections').referencesProps),
+    regReferencesUrl = /\burl\(("|')?#(.+?)\1\)/,
     regReferencesHref = /^#(.+?)$/,
+    regReferencesBegin = /(\w+)\./,
     styleOrScript = ['style', 'script'],
     generateIDchars = [
         'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
@@ -30,13 +35,14 @@ var referencesProps = require('./_collections').referencesProps,
  * @author Kir Belevich
  */
 exports.fn = function(data, params) {
-
     var currentID,
         currentIDstring,
-        IDs = {},
-        referencesIDs = {},
-        idPrefix = 'id-', // prefix IDs so that values like '__proto__' don't break the work
-        hasStyleOrScript = false;
+        IDs = new Map(),
+        referencesIDs = new Map(),
+        hasStyleOrScript = false,
+        preserveIDs = new Set(Array.isArray(params.preserve) ? params.preserve : params.preserve ? [params.preserve] : []),
+        idValuePrefix = '#',
+        idValuePostfix = '.';
 
     /**
      * Bananas!
@@ -45,109 +51,102 @@ exports.fn = function(data, params) {
      * @return {Array} output items
      */
     function monkeys(items) {
+        for (var i = 0; i < items.content.length && !hasStyleOrScript; i++) {
+            var item = items.content[i];
 
-        for (var i = 0; i < items.content.length; i++) {
-
-            var item = items.content[i],
-                match;
-
-            // check if <style> of <script> presents
-            if (item.isElem(styleOrScript)) {
-                hasStyleOrScript = true;
+            // quit if <style> of <script> presents ('force' param prevents quitting)
+            if (!params.force) {
+                if (item.isElem(styleOrScript)) {
+                    hasStyleOrScript = true;
+                    continue;
+                }
+                // Don't remove IDs if the whole SVG consists only of defs.
+                if (item.isElem('defs') && item.parentNode.isElem('svg')) {
+                    var hasDefsOnly = true;
+                    for (var j = i + 1; j < items.content.length; j++) {
+                        if (items.content[j].isElem()) {
+                            hasDefsOnly = false;
+                            break;
+                        }
+                    }
+                    if (hasDefsOnly) {
+                        break;
+                    }
+                }
             }
-
             // …and don't remove any ID if yes
-            if (!hasStyleOrScript) {
+            if (item.isElem()) {
+                item.eachAttr(function(attr) {
+                    var key, match;
 
-                if (item.isElem()) {
-
-                    item.eachAttr(function(attr) {
-                        // save IDs
-                        if (attr.name === 'id') {
-                            IDs[idPrefix + attr.value] = item;
+                    // save IDs
+                    if (attr.name === 'id') {
+                        key = attr.value;
+                        if (IDs.has(key)) {
+                            item.removeAttr('id'); // remove repeated id
+                        } else {
+                            IDs.set(key, item);
                         }
-
-                        // save IDs url() references
-                        else if (referencesProps.indexOf(attr.name) > -1) {
-                            match = attr.value.match(regReferencesUrl);
-
-                            if (match) {
-                                if (referencesIDs[idPrefix + match[1]]) {
-                                    referencesIDs[idPrefix + match[1]].push(attr);
-                                } else {
-                                    referencesIDs[idPrefix + match[1]] = [attr];
-                                }
-                            }
-                        }
-
-                        // save IDs href references
-                        else if (attr.name === 'xlink:href') {
-                            match = attr.value.match(regReferencesHref);
-
-                            if (match) {
-                                if (referencesIDs[idPrefix + match[1]]) {
-                                    referencesIDs[idPrefix + match[1]].push(attr);
-                                } else {
-                                    referencesIDs[idPrefix + match[1]] = [attr];
-                                }
-                            }
-                        }
-                    });
-
-                }
-
-                // go deeper
-                if (item.content) {
-                    monkeys(item);
-                }
-
+                        return;
+                    }
+                    // save references
+                    if (referencesProps.has(attr.name) && (match = attr.value.match(regReferencesUrl))) {
+                        key = match[2]; // url() reference
+                    } else if (
+                        attr.local === 'href' && (match = attr.value.match(regReferencesHref)) ||
+                        attr.name === 'begin' && (match = attr.value.match(regReferencesBegin))
+                    ) {
+                        key = match[1]; // href reference
+                    }
+                    if (key) {
+                        var ref = referencesIDs.get(key) || [];
+                        ref.push(attr);
+                        referencesIDs.set(key, ref);
+                    }
+                });
             }
-
+            // go deeper
+            if (item.content) {
+                monkeys(item);
+            }
         }
-
         return items;
-
     }
 
     data = monkeys(data);
 
-    if (!hasStyleOrScript) {
-
-
-        for (var k in referencesIDs) {
-            if (IDs[k]) {
-
-                // replace referenced IDs with the minified ones
-                if (params.minify) {
-
-                    currentIDstring = getIDstring(currentID = generateID(currentID), params);
-                    IDs[k].attr('id').value = currentIDstring;
-
-                    referencesIDs[k].forEach(function(attr) {
-                        attr.value = attr.value.replace('#' + k.replace(idPrefix, ''), '#' + currentIDstring);
-                    });
-
-                }
-
-                // don't remove referenced IDs
-                delete IDs[k];
-
-            }
-        }
-
-        // remove non-referenced IDs attributes from elements
-        if (params.remove) {
-
-            for(var ID in IDs) {
-                IDs[ID].removeAttr('id');
-            }
-
-        }
-
+    if (hasStyleOrScript) {
+        return data;
     }
 
-    return data;
+    for (var ref of referencesIDs) {
+        var key = ref[0];
 
+        if (IDs.has(key)) {
+            // replace referenced IDs with the minified ones
+            if (params.minify && !preserveIDs.has(key)) {
+                currentIDstring = getIDstring(currentID = generateID(currentID), params);
+                IDs.get(key).attr('id').value = currentIDstring;
+
+                for (var attr of ref[1]) {
+                    attr.value = attr.value.includes(idValuePrefix) ?
+                        attr.value.replace(idValuePrefix + key, idValuePrefix + currentIDstring) :
+                        attr.value.replace(key + idValuePostfix, currentIDstring + idValuePostfix);
+                }
+            }
+            // don't remove referenced IDs
+            IDs.delete(key);
+        }
+    }
+    // remove non-referenced IDs attributes from elements
+    if (params.remove) {
+        for(var keyElem of IDs) {
+            if (!preserveIDs.has(keyElem[0])) {
+                keyElem[1].removeAttr('id');
+            }
+        }
+    }
+    return data;
 };
 
 /**
@@ -157,7 +156,6 @@ exports.fn = function(data, params) {
  * @return {Array} generated ID array
  */
 function generateID(currentID) {
-
     if (!currentID) return [0];
 
     currentID[currentID.length - 1]++;
@@ -171,14 +169,11 @@ function generateID(currentID) {
             }
         }
     }
-
     if (currentID[0] > maxIDindex) {
         currentID[0] = 0;
         currentID.unshift(0);
     }
-
     return currentID;
-
 }
 
 /**
@@ -188,13 +183,6 @@ function generateID(currentID) {
  * @return {String} output ID string
  */
 function getIDstring(arr, params) {
-
     var str = params.prefix;
-
-    arr.forEach(function(i) {
-        str += generateIDchars[i];
-    });
-
-    return str;
-
+    return str + arr.map(i => generateIDchars[i]).join('');
 }

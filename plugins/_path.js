@@ -1,3 +1,4 @@
+/* global a2c */
 'use strict';
 
 var regPathInstructions = /([MmLlHhVvCcSsQqTtAaZz])\s*/,
@@ -5,6 +6,7 @@ var regPathInstructions = /([MmLlHhVvCcSsQqTtAaZz])\s*/,
     regNumericValues = /[-+]?(\d*\.\d+|\d+\.?)(?:[eE][-+]?\d+)?/,
     transform2js = require('./_transforms').transform2js,
     transformsMultiply = require('./_transforms').transformsMultiply,
+    transformArc = require('./_transforms').transformArc,
     collections = require('./_collections.js'),
     referencesProps = collections.referencesProps,
     defaultStrokeWidth = collections.attrsGroupsDefaults.presentation['stroke-width'],
@@ -95,7 +97,7 @@ var relative2absolute = exports.relative2absolute = function(data) {
         subpathPoint = [0, 0],
         i;
 
-    data = data.map(function(item) {
+    return data.map(function(item) {
 
         var instruction = item.instruction,
             itemData = item.data && item.data.slice();
@@ -158,8 +160,6 @@ var relative2absolute = exports.relative2absolute = function(data) {
             };
 
     });
-
-    return data;
 };
 
 /**
@@ -167,80 +167,61 @@ var relative2absolute = exports.relative2absolute = function(data) {
  *
  * @param {Object} elem current element
  * @param {Array} path input path data
- * @param {Boolean} applyTransformsStroked whether to apply transforms to stroked lines.
- * @param {Number} floatPrecision precision (used for stroke width)
+ * @param {Object} params whether to apply transforms to stroked lines and transform precision (used for stroke width)
  * @return {Array} output path data
  */
-exports.applyTransforms = function(elem, path, applyTransformsStroked, floatPrecision) {
+exports.applyTransforms = function(elem, path, params) {
     // if there are no 'stroke' attr and references to other objects such as
     // gradiends or clip-path which are also subjects to transform.
-    if (!elem.hasAttr('transform') ||
+    if (!elem.hasAttr('transform') || !elem.attr('transform').value ||
         elem.someAttr(function(attr) {
-            return ~referencesProps.indexOf(attr.name) && ~attr.value.indexOf('url(')
+            return ~referencesProps.indexOf(attr.name) && ~attr.value.indexOf('url(');
         }))
         return path;
 
-    var matrix = transformsMultiply(transform2js(elem.attr('transform').value), 9),
-        splittedMatrix = matrix.splitted || splitMatrix(matrix.data),
+    var matrix = transformsMultiply(transform2js(elem.attr('transform').value)),
         stroke = elem.computedAttr('stroke'),
-        newPoint, sx, sy;
+        id = elem.computedAttr('id'),
+        transformPrecision = params.transformPrecision,
+        newPoint, scale;
 
-    if (stroke && stroke.value != 'none'){
-      if (!applyTransformsStroked){
-        return path;
-      }
-      if (matrix.name == 'matrix'){
-        sx = +Math.sqrt(matrix.data[0] * matrix.data[0] + matrix.data[1] * matrix.data[1]).toFixed(floatPrecision);
-        sy = +Math.sqrt(matrix.data[2] * matrix.data[2] + matrix.data[3] * matrix.data[3]).toFixed(floatPrecision);
-      } else if (matrix.name == 'scale'){
-        sx = +matrix.data[0].toFixed(floatPrecision);
-        sy = +matrix.data[1].toFixed(floatPrecision);
-      } else {
-        sx = 1;
-        sy = 1;
-      }
+    if (stroke && stroke != 'none') {
+        if (!params.applyTransformsStroked ||
+            (matrix.data[0] != matrix.data[3] || matrix.data[1] != -matrix.data[2]) &&
+            (matrix.data[0] != -matrix.data[3] || matrix.data[1] != matrix.data[2]))
+            return path;
 
-      if (sx !== sy){
-        return path;
-      }
-      if (sx !== 1){
-        var strokeWidth = elem.computedAttr('stroke-width') || defaultStrokeWidth;
+        // "stroke-width" should be inside the part with ID, otherwise it can be overrided in <use>
+        if (id) {
+            var idElem = elem,
+                hasStrokeWidth = false;
 
-        if (elem.hasAttr('stroke-width')){
-          elem.attrs['stroke-width'].value = elem.attrs['stroke-width'].value.trim()
-            .replace(regNumericValues, function(num) { return removeLeadingZero(num * sx) });
-        } else {
-          elem.addAttr({
-              name: 'stroke-width',
-              prefix: '',
-              local: 'stroke-width',
-              value: strokeWidth.replace(regNumericValues, function(num) { return removeLeadingZero(num * sx) })
-          });
+            do {
+                if (idElem.hasAttr('stroke-width')) hasStrokeWidth = true;
+            } while (!idElem.hasAttr('id', id) && !hasStrokeWidth && (idElem = idElem.parentNode));
+
+            if (!hasStrokeWidth) return path;
         }
-      }
-    }
 
-    // If an 'a' command can't be transformed directly, convert path to curves.
-    if (!splittedMatrix.isSimple && path.some(function(i) { return i.instruction == 'a' })) {
-        path.forEach(function(item, index, path){
-            var prev = index && path[index - 1];
-            if (item.instruction == 'a') {
-                var curves = a2c.apply(0, [0, 0].concat(item.data)),
-                    items = [],
-                    curveData;
-                while ((curveData = curves.splice(0,6)).length) {
-                    items.push(prev = {
-                        instruction: 'c',
-                        data: curveData,
-                        coords: [prev.coords[0] + curveData[4], prev.coords[1] + curveData[5]],
-                        base: prev.coords
-                    });
-                }
-                path.splice.apply(path, [index, 1].concat(items));
+        scale = +Math.sqrt(matrix.data[0] * matrix.data[0] + matrix.data[1] * matrix.data[1]).toFixed(transformPrecision);
+
+        if (scale !== 1) {
+            var strokeWidth = elem.computedAttr('stroke-width') || defaultStrokeWidth;
+
+            if (elem.hasAttr('stroke-width')) {
+                elem.attrs['stroke-width'].value = elem.attrs['stroke-width'].value.trim()
+                    .replace(regNumericValues, function(num) { return removeLeadingZero(num * scale) });
             } else {
-                if (prev) item.base = prev.coords;
+                elem.addAttr({
+                    name: 'stroke-width',
+                    prefix: '',
+                    local: 'stroke-width',
+                    value: strokeWidth.replace(regNumericValues, function(num) { return removeLeadingZero(num * scale) })
+                });
             }
-        });
+        }
+    } else if (id) { // Stroke and stroke-width can be redefined with <use>
+        return path;
     }
 
     path.forEach(function(pathItem) {
@@ -281,9 +262,17 @@ exports.applyTransforms = function(elem, path, applyTransformsStroked, floatPrec
 
                 if (pathItem.instruction == 'a') {
 
-                    pathItem.data[0] *= splittedMatrix.scalex;
-                    pathItem.data[1] *= splittedMatrix.scaley;
-                    pathItem.data[2] += splittedMatrix.rotate;
+                    transformArc(pathItem.data, matrix.data);
+
+                    // reduce number of digits in rotation angle
+                    if (Math.abs(pathItem.data[2]) > 80) {
+                        var a = pathItem.data[0],
+                            rotation = pathItem.data[2];
+                        pathItem.data[0] = pathItem.data[1];
+                        pathItem.data[1] = a;
+                        pathItem.data[2] = rotation + (rotation > 0 ? -90 : 90);
+                    }
+
                     newPoint = transformPoint(matrix.data, pathItem.data[5], pathItem.data[6]);
                     pathItem.data[5] = newPoint[0];
                     pathItem.data[6] = newPoint[1];
@@ -569,7 +558,7 @@ function collapseRepeated(data) {
                     data: prev.data.concat(item.data),
                     coords: item.coords,
                     base: prev.base
-                }
+                };
             } else {
                 prev.data = item.data;
                 prev.coords = item.coords;
@@ -602,7 +591,7 @@ function set(dest, source) {
  * @param {Array} path2 JS path representation
  * @return {Boolean}
  */
-exports.interesects = function(path1, path2) {
+exports.intersects = function(path1, path2) {
     if (path1.length < 3 || path2.length < 3) return false; // nothing to fill
 
     // Collect points of every subpath.
@@ -674,6 +663,8 @@ exports.interesects = function(path1, path2) {
 };
 
 function processSimplex(simplex, direction) {
+    /* jshint -W004 */
+
     // we only need to handle to 1-simplex and 2-simplex
     if (simplex.length == 2) { // 1-simplex
         var a = simplex[1],
@@ -829,6 +820,8 @@ function gatherPoints(points, item, index, path) {
  * @param points An array of [X, Y] coordinates
  */
 function convexHull(points) {
+    /* jshint -W004 */
+
     points.sort(function(a, b) {
         return a[0] == b[0] ? a[1] - b[1] : a[0] - b[0];
     });
@@ -876,74 +869,14 @@ function convexHull(points) {
 }
 
 function cross(o, a, b) {
-    return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+    return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
 }
 
 /* Based on code from Snap.svg (Apache 2 license). http://snapsvg.io/
  * Thanks to Dmitry Baranovskiy for his great work!
  */
 
-function norm(a) {
-    return a[0] * a[0] + a[1] * a[1];
-}
-
-function normalize(a) {
-    var mag = Math.sqrt(norm(a));
-    if (a[0]) a[0] /= mag;
-    if (a[1]) a[1] /= mag;
-}
-
-function deg(rad) {
-    return rad * 180 / Math.PI % 360;
-}
-
-function determinant(matrix) {
-    return matrix[0] * matrix[3] - matrix[1] * matrix[2];
-}
-
-/* Splits matrix into primitive transformations
- = (object) in format:
- o dx (number) translation by x
- o dy (number) translation by y
- o scalex (number) scale by x
- o scaley (number) scale by y
- o shear (number) shear
- o rotate (number) rotation in deg
- o isSimple (boolean) could it be represented via simple transformations
- */
-
-function splitMatrix(matrix) {
-    var out = {};
-    // translation
-    out.dx = matrix[4];
-    out.dy = matrix[5];
-    // scale and shear
-    var row = [[matrix[0] , matrix[2] ], [matrix[1] , matrix[3]]];
-    out.scalex = Math.sqrt(norm(row[0]));
-    normalize(row[0]);
-    out.shear = row[0][0] * row[1][0] + row[0][1] * row[1][1];
-    row[1] = [row[1][0] - row[0][0] * out.shear, row[1][1] - row[0][1] * out.shear];
-    out.scaley = Math.sqrt(norm(row[1]));
-    normalize(row[1]);
-    out.shear /= out.scaley;
-    if (determinant(matrix) < 0) {
-        out.scalex = -out.scalex;
-    }
-    // rotation
-    var sin = -row[0][1],
-        cos = row[1][1];
-    if (cos < 0) {
-        out.rotate = deg(Math.acos(cos));
-        if (sin < 0) {
-            out.rotate = 360 - out.rotate;
-        }
-    } else {
-        out.rotate = deg(Math.asin(sin));
-    }
-    out.isSimple = !+out.shear.toFixed(9) && (out.scalex.toFixed(9) == out.scaley.toFixed(9) || !out.rotate);
-    return out;
-}
-
+// jshint ignore: start
 function a2c(x1, y1, rx, ry, angle, large_arc_flag, sweep_flag, x2, y2, recursive) {
     // for more information of where this Math came from visit:
     // http://www.w3.org/TR/SVG11/implnote.html#ArcImplementationNotes
@@ -1024,3 +957,4 @@ function a2c(x1, y1, rx, ry, angle, large_arc_flag, sweep_flag, x2, y2, recursiv
         return newres;
     }
 }
+// jshint ignore: end

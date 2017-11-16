@@ -2,6 +2,8 @@
 
 var FS = require('fs'),
     PATH = require('path'),
+    EOL = require('os').EOL,
+    regEOL = new RegExp(EOL, 'g'),
     regFilename = /^(.*)\.(\d+)\.svg$/,
     SVGO = require(process.env.COVERAGE ?
                    '../../lib-cov/svgo':
@@ -13,41 +15,39 @@ describe('plugins tests', function() {
 
         var match = file.match(regFilename),
             index,
-            name,
-            svgo,
-            plugins;
+            name;
 
         if (match) {
 
-            name = match[1];
+            name  = match[1];
             index = match[2];
 
             file = PATH.resolve(__dirname, file);
 
-            plugins = {};
-            plugins[name] = true;
+            it(name + '.' + index, function() {
 
-            svgo = new SVGO({
-                full: true,
-                plugins: [ plugins ],
-                js2svg: { pretty: true }
-            });
+                return readFile(file)
+                .then(function(data) {
+                    var splitted = normalize(data).split(/\s*@@@\s*/),
+                        orig     = splitted[0],
+                        should   = splitted[1],
+                        params   = splitted[2],
 
-            it(name + '.' + index, function(done) {
+                        plugins = {},
+                        svgo;
 
-                FS.readFile(file, 'utf8', function(err, data) {
+                    plugins[name] = (params) ? JSON.parse(params) : true;
 
-                    var splitted = data.split('@@@'),
-                        orig = splitted[0],
-                        should = splitted[1];
-
-                    svgo.optimize(orig, function(result) {
-                        result = '\n\n' + result.data;
-
-                        result.should.be.equal(should);
-                        done();
+                    svgo = new SVGO({
+                        full    : true,
+                        plugins : [ plugins ],
+                        js2svg  : { pretty: true }
                     });
 
+                    return svgo.optimize(orig, {path: file}).then(function(result) {
+                        //FIXME: results.data has a '\n' at the end while it should not
+                        normalize(result.data).should.be.equal(should);
+                    });
                 });
 
             });
@@ -57,3 +57,16 @@ describe('plugins tests', function() {
     });
 
 });
+
+function normalize(file) {
+    return file.trim().replace(regEOL, '\n');
+}
+
+function readFile(file) {
+    return new Promise(function(resolve, reject) {
+        FS.readFile(file, 'utf8', function(err, data) {
+            if (err) return reject(err);
+            resolve(data);
+        });
+    });
+}

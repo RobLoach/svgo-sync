@@ -1,11 +1,12 @@
-"use strict";
+'use strict';
 
 exports.type = 'perItem';
 
 exports.active = true;
 
-var nonRendering = require('./_collections').elemsGroups.nonRendering,
-    defs;
+exports.description = 'removes elements in <defs> without id';
+
+var nonRendering = require('./_collections').elemsGroups.nonRendering;
 
 /**
  * Removes content of defs and properties that aren't rendered directly without ids.
@@ -19,9 +20,10 @@ exports.fn = function(item) {
 
     if (item.isElem('defs')) {
 
-        defs = item;
-        item.content = (item.content || []).reduce(getUsefulItems, []);
-
+        if (item.content) {
+            item.content = getUsefulItems(item, []);
+        }
+        
         if (item.isEmpty()) return false;
 
     } else if (item.isElem(nonRendering) && !item.hasAttr('id')) {
@@ -32,18 +34,20 @@ exports.fn = function(item) {
 
 };
 
-function getUsefulItems(usefulItems, item) {
+function getUsefulItems(item, usefulItems) {
 
-    if (item.hasAttr('id')) {
+    item.content.forEach(function(child) {
+        if (child.hasAttr('id') || child.isElem('style')) {
 
-        usefulItems.push(item);
-        item.parentNode = defs;
+            usefulItems.push(child);
+            child.parentNode = item;
 
-    } else if (!item.isEmpty()) {
+        } else if (!child.isEmpty()) {
 
-        item.content.reduce(getUsefulItems, usefulItems);
+            child.content = getUsefulItems(child, usefulItems);
 
-    }
+        }
+    });
 
     return usefulItems;
 }
